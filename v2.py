@@ -523,52 +523,54 @@ class ManageView(discord.ui.View):
             await interaction.response.send_message(embed=create_info_embed("SSH Access", "Generating SSH connection..."), ephemeral=True)
 
             try:
-                # Check if tmate exists
-                check_proc = await asyncio.create_subprocess_exec(
-                    "lxc", "exec", container_name, "--", "which", "tmate",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await check_proc.communicate()
+             # Check if curl exists inside container
+             check_proc = await asyncio.create_subprocess_exec(
+             "lxc", "exec", container_name, "--", "which", "curl",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+          )
+           stdout, stderr = await check_proc.communicate()
 
-                if check_proc.returncode != 0:
-                    await interaction.followup.send(embed=create_info_embed("Installing SSH", "Installing tmate..."), ephemeral=True)
-                    await execute_lxc(f"lxc exec {container_name} -- sudo apt-get update -y")
-                    await execute_lxc(f"lxc exec {container_name} -- sudo apt-get install tmate -y")
-                    await interaction.followup.send(embed=create_success_embed("Installed", "SSH service installed!"), ephemeral=True)
+          if check_proc.returncode != 0:
+           await interaction.followup.send(embed=create_info_embed("Installing SSH", "Installing curl..."), ephemeral=True)
+           await execute_lxc(f"lxc exec {container_name} -- sudo apt-get update -y")
+           await execute_lxc(f"lxc exec {container_name} -- sudo apt-get install curl -y")
+           await interaction.followup.send(embed=create_success_embed("Installed", "curl installed successfully!"), ephemeral=True)
 
-                # REMOVED: Kill existing tmate sessions - now allowing unlimited sessions
-                # Users can launch unlimited tmate sessions
+         # Run sshx.io command to generate SSH URL
+         await interaction.followup.send(embed=create_info_embed("Generating SSH Link", "Please wait..."), ephemeral=True)
+         ssh_proc = await asyncio.create_subprocess_shell(
+         f"lxc exec {container_name} -- bash -c \"curl -sSf https://sshx.io/get | sh -s run\"",
+         stdout=asyncio.subprocess.PIPE,
+         stderr=asyncio.subprocess.PIPE
+        )
+         stdout, stderr = await ssh_proc.communicate()
 
-                # Start tmate with unique session name using timestamp
-                session_name = f"session-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                await execute_lxc(f"lxc exec {container_name} -- tmate -S /tmp/{session_name}.sock new-session -d")
-                await asyncio.sleep(3)
+         ssh_output = stdout.decode().strip() if stdout else ""
+         error_output = stderr.decode().strip() if stderr else ""
+ 
+        # Extract sshx.io link from output
+        ssh_url = None
+        for line in ssh_output.splitlines():
+              if "ssh" in line or "sshx.io" in line:
+              ssh_url = line.strip()
+              break
+ 
+        if ssh_url:
+              try:
+                 ssh_embed = create_embed("🔑 SSH Access", f"SSH connection for VPS `{container_name}`:", 0x00ff88)
+                 ssh_embed.add_field(name="Command", value=f"```{ssh_url}```", inline=False)
+                 ssh_embed.add_field(name="⚠️ Security", value="This link is temporary. Do not share it.", inline=False)
+                 ssh_embed.add_field(name="🌐 Provider", value="Powered by sshx.io", inline=False)
+                 await interaction.user.send(embed=ssh_embed)
+                 await interaction.followup.send(embed=create_success_embed("SSH Sent", "Check your DMs for your SSH link!"), ephemeral=True)
+                 except discord.Forbidden:
+                await interaction.followup.send(embed=create_error_embed("DM Failed", "Enable DMs to receive SSH link!"), ephemeral=True)
+           else:
+             await interaction.followup.send(embed=create_error_embed("SSH Failed", error_output or "Failed to generate SSH link."), ephemeral=True)
 
-                # Get SSH link
-                ssh_proc = await asyncio.create_subprocess_exec(
-                    "lxc", "exec", container_name, "--", "tmate", "-S", f"/tmp/{session_name}.sock", "display", "-p", "#{tmate_ssh}",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                stdout, stderr = await ssh_proc.communicate()
-                ssh_url = stdout.decode().strip() if stdout else None
-
-                if ssh_url:
-                    try:
-                        ssh_embed = create_embed("🔑 SSH Access", f"SSH connection for VPS `{container_name}`:", 0x00ff88)
-                        ssh_embed.add_field(name="Command", value=f"```{ssh_url}```", inline=False)
-                        ssh_embed.add_field(name="⚠️ Security", value="This link is temporary. Do not share it.", inline=False)
-                        ssh_embed.add_field(name="📝 Session", value=f"Session ID: {session_name}", inline=False)
-                        await interaction.user.send(embed=ssh_embed)
-                        await interaction.followup.send(embed=create_success_embed("SSH Sent", f"Check your DMs for SSH link! Session: {session_name}"), ephemeral=True)
-                    except discord.Forbidden:
-                        await interaction.followup.send(embed=create_error_embed("DM Failed", "Enable DMs to receive SSH link!"), ephemeral=True)
-                else:
-                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
-                    await interaction.followup.send(embed=create_error_embed("SSH Failed", error_msg), ephemeral=True)
-            except Exception as e:
-                await interaction.followup.send(embed=create_error_embed("SSH Error", str(e)), ephemeral=True)
+          except Exception as e:
+          await interaction.followup.send(embed=create_error_embed("SSH Error", str(e)), ephemeral=True)
 
 @bot.command(name='manage')
 async def manage_vps(ctx, user: discord.Member = None):
